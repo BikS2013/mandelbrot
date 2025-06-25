@@ -112,15 +112,20 @@
         
         <div id="3dControls" style="display: none;">
             <div class="control-group">
-                <label for="rotationX">Rotation X: <span id="rotationXValue">30</span>°</label>
+                <label for="rotationX">Rotation X (Pitch): <span id="rotationXValue">30</span>°</label>
                 <input type="range" id="rotationX" min="0" max="90" value="30" step="5">
             </div>
-            
+
             <div class="control-group">
-                <label for="rotationZ">Rotation Z: <span id="rotationZValue">45</span>°</label>
+                <label for="rotationY">Rotation Y (Roll): <span id="rotationYValue">0</span>°</label>
+                <input type="range" id="rotationY" min="0" max="360" value="0" step="5">
+            </div>
+
+            <div class="control-group">
+                <label for="rotationZ">Rotation Z (Yaw): <span id="rotationZValue">45</span>°</label>
                 <input type="range" id="rotationZ" min="0" max="360" value="45" step="5">
             </div>
-            
+
             <div class="control-group">
                 <label for="heightScale">Height Scale: <span id="heightScaleValue">50</span></label>
                 <input type="range" id="heightScale" min="10" max="200" value="50" step="10">

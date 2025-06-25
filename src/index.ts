@@ -11,6 +11,7 @@ class MandelbrotExplorer {
     private colorScheme: ColorScheme = 'classic';
     private is3DMode = false;
     private rotationX = 30;
+    private rotationY = 0;
     private rotationZ = 45;
     private heightScale = 50;
     private iterationData: number[][] = [];
@@ -138,16 +139,25 @@ class MandelbrotExplorer {
 
         const rotationXSlider = document.getElementById('rotationX') as HTMLInputElement;
         const rotationXValue = document.getElementById('rotationXValue') as HTMLSpanElement;
-        
+
         rotationXSlider.addEventListener('input', (e) => {
             this.rotationX = parseInt((e.target as HTMLInputElement).value);
             rotationXValue.textContent = this.rotationX.toString();
             if (this.is3DMode) this.render();
         });
 
+        const rotationYSlider = document.getElementById('rotationY') as HTMLInputElement;
+        const rotationYValue = document.getElementById('rotationYValue') as HTMLSpanElement;
+
+        rotationYSlider.addEventListener('input', (e) => {
+            this.rotationY = parseInt((e.target as HTMLInputElement).value);
+            rotationYValue.textContent = this.rotationY.toString();
+            if (this.is3DMode) this.render();
+        });
+
         const rotationZSlider = document.getElementById('rotationZ') as HTMLInputElement;
         const rotationZValue = document.getElementById('rotationZValue') as HTMLSpanElement;
-        
+
         rotationZSlider.addEventListener('input', (e) => {
             this.rotationZ = parseInt((e.target as HTMLInputElement).value);
             rotationZValue.textContent = this.rotationZ.toString();
@@ -272,6 +282,7 @@ class MandelbrotExplorer {
                     parseInt((document.getElementById('iterations') as HTMLInputElement).value),
                     this.colorScheme,
                     this.rotationX,
+                    this.rotationY,
                     this.rotationZ,
                     this.heightScale
                 );

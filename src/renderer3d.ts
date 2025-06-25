@@ -24,7 +24,8 @@ export class Renderer3D {
     private ctx: CanvasRenderingContext2D;
     private width: number;
     private height: number;
-    private gridResolution: number = 2; // Higher resolution for better quality
+    private gridResolution: number = 1; // Higher resolution for smoother surfaces
+    private smoothingRadius: number = 2; // Radius for Gaussian smoothing
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -38,12 +39,17 @@ export class Renderer3D {
         maxIterations: number,
         colorScheme: ColorScheme,
         rotationX: number,
+        rotationY: number,
         rotationZ: number,
-        heightScale: number
+        heightScale: number,
+        smoothingLevel: number = 2
     ): void {
         // Update dimensions in case canvas was resized
         this.width = this.canvas.width;
         this.height = this.canvas.height;
+
+        // Update smoothing radius based on smoothing level
+        this.smoothingRadius = Math.max(1, Math.floor(smoothingLevel));
 
         // Clear canvas with gradient background
         this.drawBackground();
@@ -52,7 +58,7 @@ export class Renderer3D {
         const gridPoints = this.createGridPoints(iterationData, maxIterations, heightScale);
 
         // Transform and project points
-        const projectedPoints = this.transformAndProject(gridPoints, rotationX, rotationZ);
+        const projectedPoints = this.transformAndProject(gridPoints, rotationX, rotationY, rotationZ);
 
         // Render the 3D surface
         this.renderSurface(projectedPoints, maxIterations, colorScheme);
@@ -73,6 +79,10 @@ export class Renderer3D {
     private createGridPoints(iterationData: number[][], maxIterations: number, heightScale: number): Point3D[][] {
         const gridWidth = Math.floor(this.width / this.gridResolution);
         const gridHeight = Math.floor(this.height / this.gridResolution);
+
+        // First, create a smooth height map using interpolation and smoothing
+        const smoothHeightMap = this.createSmoothHeightMap(iterationData, maxIterations, heightScale);
+
         const grid: Point3D[][] = [];
 
         for (let gridY = 0; gridY < gridHeight; gridY++) {
@@ -81,25 +91,14 @@ export class Renderer3D {
                 const x = gridX * this.gridResolution;
                 const y = gridY * this.gridResolution;
 
-                if (iterationData[y] && iterationData[y][x] !== undefined) {
-                    const iterations = iterationData[y][x];
-
-                    // Improved height calculation for better 3D effect
-                    let z: number;
-                    if (iterations === maxIterations) {
-                        // Points in the set are at sea level (0)
-                        z = 0;
-                    } else {
-                        // Points outside the set create mountains
-                        const normalizedIterations = iterations / maxIterations;
-                        // Use smooth exponential curve for natural-looking terrain
-                        z = heightScale * Math.pow(1 - normalizedIterations, 0.7);
-                    }
+                if (y < smoothHeightMap.length && x < smoothHeightMap[0].length) {
+                    const smoothedHeight = smoothHeightMap[y][x];
+                    const iterations = this.getInterpolatedIterations(iterationData, x, y);
 
                     grid[gridY][gridX] = {
                         x: x - this.width / 2,
                         y: y - this.height / 2,
-                        z: z,
+                        z: smoothedHeight,
                         iterations: iterations,
                         gridX: gridX,
                         gridY: gridY
@@ -111,8 +110,119 @@ export class Renderer3D {
         return grid;
     }
 
-    private transformAndProject(gridPoints: Point3D[][], rotationX: number, rotationZ: number): ProjectedPoint[][] {
+    private createSmoothHeightMap(iterationData: number[][], maxIterations: number, heightScale: number): number[][] {
+        const height = iterationData.length;
+        const width = iterationData[0]?.length || 0;
+        const heightMap: number[][] = [];
+
+        // First pass: create initial height map with smooth height function
+        for (let y = 0; y < height; y++) {
+            heightMap[y] = [];
+            for (let x = 0; x < width; x++) {
+                if (iterationData[y] && iterationData[y][x] !== undefined) {
+                    const iterations = iterationData[y][x];
+                    heightMap[y][x] = this.calculateSmoothHeight(iterations, maxIterations, heightScale);
+                } else {
+                    heightMap[y][x] = 0;
+                }
+            }
+        }
+
+        // Second pass: apply Gaussian smoothing
+        return this.applyGaussianSmoothing(heightMap);
+    }
+
+    private calculateSmoothHeight(iterations: number, maxIterations: number, heightScale: number): number {
+        if (iterations === maxIterations) {
+            return 0; // Points in the set are at sea level
+        }
+
+        const normalizedIterations = iterations / maxIterations;
+
+        // Use multiple smooth functions combined for more natural terrain
+        const exponential = Math.pow(1 - normalizedIterations, 0.5);
+        const logarithmic = Math.log(1 + (1 - normalizedIterations) * 9) / Math.log(10);
+        const sinusoidal = Math.sin((1 - normalizedIterations) * Math.PI / 2);
+
+        // Blend the functions for smoother transitions
+        const blended = (exponential * 0.4 + logarithmic * 0.3 + sinusoidal * 0.3);
+
+        return heightScale * blended;
+    }
+
+    private applyGaussianSmoothing(heightMap: number[][]): number[][] {
+        const height = heightMap.length;
+        const width = heightMap[0]?.length || 0;
+        const smoothed: number[][] = [];
+        const radius = this.smoothingRadius;
+
+        // Create Gaussian kernel
+        const kernel: number[][] = [];
+        const sigma = radius / 3;
+        let kernelSum = 0;
+
+        for (let ky = -radius; ky <= radius; ky++) {
+            kernel[ky + radius] = [];
+            for (let kx = -radius; kx <= radius; kx++) {
+                const distance = Math.sqrt(kx * kx + ky * ky);
+                const value = Math.exp(-(distance * distance) / (2 * sigma * sigma));
+                kernel[ky + radius][kx + radius] = value;
+                kernelSum += value;
+            }
+        }
+
+        // Normalize kernel
+        for (let ky = 0; ky < kernel.length; ky++) {
+            for (let kx = 0; kx < kernel[ky].length; kx++) {
+                kernel[ky][kx] /= kernelSum;
+            }
+        }
+
+        // Apply smoothing
+        for (let y = 0; y < height; y++) {
+            smoothed[y] = [];
+            for (let x = 0; x < width; x++) {
+                let sum = 0;
+                let weightSum = 0;
+
+                for (let ky = -radius; ky <= radius; ky++) {
+                    for (let kx = -radius; kx <= radius; kx++) {
+                        const ny = y + ky;
+                        const nx = x + kx;
+
+                        if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
+                            const weight = kernel[ky + radius][kx + radius];
+                            sum += heightMap[ny][nx] * weight;
+                            weightSum += weight;
+                        }
+                    }
+                }
+
+                smoothed[y][x] = weightSum > 0 ? sum / weightSum : heightMap[y][x];
+            }
+        }
+
+        return smoothed;
+    }
+
+    private getInterpolatedIterations(iterationData: number[][], x: number, y: number): number {
+        const height = iterationData.length;
+        const width = iterationData[0]?.length || 0;
+
+        // Clamp coordinates
+        const clampedY = Math.max(0, Math.min(height - 1, Math.floor(y)));
+        const clampedX = Math.max(0, Math.min(width - 1, Math.floor(x)));
+
+        if (iterationData[clampedY] && iterationData[clampedY][clampedX] !== undefined) {
+            return iterationData[clampedY][clampedX];
+        }
+
+        return 0;
+    }
+
+    private transformAndProject(gridPoints: Point3D[][], rotationX: number, rotationY: number, rotationZ: number): ProjectedPoint[][] {
         const radX = (rotationX * Math.PI) / 180;
+        const radY = (rotationY * Math.PI) / 180;
         const radZ = (rotationZ * Math.PI) / 180;
         const projectedGrid: ProjectedPoint[][] = [];
 
@@ -122,14 +232,21 @@ export class Renderer3D {
                 const point = gridPoints[gridY][gridX];
                 if (!point) continue;
 
-                // Apply 3D rotations
+                // Apply 3D rotations in order: X (pitch), Y (roll), Z (yaw)
                 // Rotate around X axis (pitch)
                 let y = point.y * Math.cos(radX) - point.z * Math.sin(radX);
                 let z = point.y * Math.sin(radX) + point.z * Math.cos(radX);
+                let x = point.x;
+
+                // Rotate around Y axis (roll)
+                const newX = x * Math.cos(radY) + z * Math.sin(radY);
+                z = -x * Math.sin(radY) + z * Math.cos(radY);
+                x = newX;
 
                 // Rotate around Z axis (yaw)
-                const x = point.x * Math.cos(radZ) - y * Math.sin(radZ);
-                y = point.x * Math.sin(radZ) + y * Math.cos(radZ);
+                const finalX = x * Math.cos(radZ) - y * Math.sin(radZ);
+                y = x * Math.sin(radZ) + y * Math.cos(radZ);
+                x = finalX;
 
                 // Improved perspective projection
                 const distance = 800; // Camera distance
@@ -219,21 +336,31 @@ export class Renderer3D {
             normal.z /= length;
         }
 
-        // Light direction (from top-left-front)
-        const lightDir = { x: -0.5, y: -0.5, z: 1 };
-        const lightIntensity = Math.max(0.2, Math.abs(
-            normal.x * lightDir.x + normal.y * lightDir.y + normal.z * lightDir.z
-        ));
+        // Enhanced lighting with multiple light sources
+        const lightDir1 = { x: -0.5, y: -0.5, z: 1 }; // Main light
+        const lightDir2 = { x: 0.3, y: 0.3, z: 0.8 };  // Fill light
+        const lightDir3 = { x: 0, y: 1, z: 0.2 };      // Ambient light
 
-        // Get base color
-        const baseColor = ColorSchemes.getColor(iterations, maxIterations, colorScheme);
+        const intensity1 = Math.max(0, normal.x * lightDir1.x + normal.y * lightDir1.y + normal.z * lightDir1.z);
+        const intensity2 = Math.max(0, normal.x * lightDir2.x + normal.y * lightDir2.y + normal.z * lightDir2.z);
+        const intensity3 = Math.max(0, normal.x * lightDir3.x + normal.y * lightDir3.y + normal.z * lightDir3.z);
 
-        // Apply lighting
-        const r = Math.floor(baseColor.r * lightIntensity);
-        const g = Math.floor(baseColor.g * lightIntensity);
-        const b = Math.floor(baseColor.b * lightIntensity);
+        // Combine lighting with different weights
+        const lightIntensity = Math.max(0.15,
+            intensity1 * 0.6 + intensity2 * 0.25 + intensity3 * 0.15
+        );
 
-        // Draw triangle
+        // Get base color with smooth interpolation between vertex colors
+        const avgIterations = (p1.iterations + p2.iterations + p3.iterations) / 3;
+        const baseColor = ColorSchemes.getColor(avgIterations, maxIterations, colorScheme);
+
+        // Apply lighting with gamma correction for more realistic shading
+        const gamma = 2.2;
+        const r = Math.floor(255 * Math.pow((baseColor.r / 255) * lightIntensity, 1 / gamma));
+        const g = Math.floor(255 * Math.pow((baseColor.g / 255) * lightIntensity, 1 / gamma));
+        const b = Math.floor(255 * Math.pow((baseColor.b / 255) * lightIntensity, 1 / gamma));
+
+        // Draw triangle with anti-aliasing hint
         this.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
         this.ctx.beginPath();
         this.ctx.moveTo(p1.x, p1.y);
@@ -241,11 +368,19 @@ export class Renderer3D {
         this.ctx.lineTo(p3.x, p3.y);
         this.ctx.closePath();
         this.ctx.fill();
+
+        // Add subtle edge smoothing by drawing slightly transparent edges
+        if (lightIntensity > 0.3) {
+            this.ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
+            this.ctx.lineWidth = 0.5;
+            this.ctx.stroke();
+        }
     }
 
     private renderWireframe(projectedGrid: ProjectedPoint[][]): void {
-        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-        this.ctx.lineWidth = 0.5;
+        // Make wireframe much more subtle since we have smooth surfaces
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+        this.ctx.lineWidth = 0.3;
 
         // Draw horizontal grid lines
         for (let gridY = 0; gridY < projectedGrid.length; gridY++) {
