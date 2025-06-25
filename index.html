@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mandelbrot Explorer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        #canvas {
+            cursor: crosshair;
+            display: block;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 8px;
+            min-width: 200px;
+        }
+        
+        #controls h3 {
+            margin-top: 0;
+        }
+        
+        .control-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+        }
+        
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        #info {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <div id="controls">
+        <h3>Mandelbrot Explorer</h3>
+        
+        <div class="control-group">
+            <label for="iterations">Max Iterations: <span id="iterationsValue">100</span></label>
+            <input type="range" id="iterations" min="10" max="1000" value="100" step="10">
+        </div>
+        
+        <div class="control-group">
+            <label for="colorScheme">Color Scheme:</label>
+            <select id="colorScheme">
+                <option value="classic">Classic</option>
+                <option value="fire">Fire</option>
+                <option value="ocean">Ocean</option>
+                <option value="rainbow">Rainbow</option>
+                <option value="grayscale">Grayscale</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label for="render3D">
+                <input type="checkbox" id="render3D"> 3D Mode
+            </label>
+        </div>
+        
+        <div id="3dControls" style="display: none;">
+            <div class="control-group">
+                <label for="rotationX">Rotation X: <span id="rotationXValue">30</span>°</label>
+                <input type="range" id="rotationX" min="0" max="90" value="30" step="5">
+            </div>
+            
+            <div class="control-group">
+                <label for="rotationZ">Rotation Z: <span id="rotationZValue">45</span>°</label>
+                <input type="range" id="rotationZ" min="0" max="360" value="45" step="5">
+            </div>
+            
+            <div class="control-group">
+                <label for="heightScale">Height Scale: <span id="heightScaleValue">50</span></label>
+                <input type="range" id="heightScale" min="10" max="200" value="50" step="10">
+            </div>
+        </div>
+        
+        <div class="control-group">
+            <button id="resetView">Reset View</button>
+        </div>
+        
+        <div class="control-group">
+            <label>Quick Locations:</label>
+            <button id="location1" style="margin-bottom: 5px;">Seahorse Valley</button>
+            <button id="location2" style="margin-bottom: 5px;">Mini Mandelbrot</button>
+            <button id="location3">Spiral Detail</button>
+        </div>
+        
+        <div class="control-group">
+            <button id="saveImage">Save Image</button>
+        </div>
+    </div>
+    
+    <div id="info">
+        <div>Click and drag to zoom in</div>
+        <div>Scroll to zoom in/out</div>
+        <div id="coordinates"></div>
+        <div id="zoomLevel"></div>
+    </div>
+    
+    <div id="loading">Calculating...</div>
+    
+    <script type="module" src="dist/index.js"></script>
+</body>
+</html>

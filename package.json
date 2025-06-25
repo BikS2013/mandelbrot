@@ -1,0 +1,16 @@
+{
+  "name": "mandelbrot-explorer",
+  "version": "1.0.0",
+  "description": "TypeScript-based Mandelbrot set explorer",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "serve": "node serve.js",
+    "start": "npm run build && npm run serve"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
