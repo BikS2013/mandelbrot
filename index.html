@@ -31,6 +31,25 @@
         
         #controls h3 {
             margin-top: 0;
+            margin-bottom: 0;
+        }
+
+        #controlsHeader {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+
+
+        #toggleControls:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(1.1);
+        }
+
+        #controlsContent {
+            transition: all 0.3s ease;
         }
         
         .control-group {
@@ -56,6 +75,24 @@
             cursor: pointer;
             font-size: 14px;
             width: 100%;
+        }
+
+        /* Override button styles for the toggle button */
+        #toggleControls {
+            background: rgba(255, 255, 255, 0.2) !important;
+            border: 1px solid rgba(255, 255, 255, 0.3) !important;
+            color: white !important;
+            width: 30px !important;
+            height: 30px !important;
+            border-radius: 50% !important;
+            cursor: pointer;
+            font-size: 18px !important;
+            font-weight: bold;
+            display: flex !important;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            padding: 0 !important;
         }
         
         button:hover {
@@ -86,12 +123,16 @@
     <canvas id="canvas"></canvas>
     
     <div id="controls">
-        <h3>Mandelbrot Explorer</h3>
-        
-        <div class="control-group">
-            <label for="iterations">Max Iterations: <span id="iterationsValue">100</span></label>
-            <input type="range" id="iterations" min="10" max="1000" value="100" step="10">
+        <div id="controlsHeader">
+            <h3>Mandelbrot Explorer</h3>
+            <button id="toggleControls" title="Hide/Show Controls">−</button>
         </div>
+
+        <div id="controlsContent">
+            <div class="control-group">
+                <label for="iterations">Max Iterations: <span id="iterationsValue">100</span></label>
+                <input type="range" id="iterations" min="10" max="1000" value="100" step="10">
+            </div>
         
         <div class="control-group">
             <label for="colorScheme">Color Scheme:</label>
@@ -165,12 +206,15 @@
         <div class="control-group">
             <button id="saveImage">Save Image</button>
         </div>
+        </div> <!-- End controlsContent -->
     </div>
     
     <div id="info">
         <div>Click and drag to zoom in</div>
         <div>Scroll to zoom in/out</div>
         <div>Rectangle Selection: Select area for 3D heightmap</div>
+        <div>Press 'H' to hide/show controls</div>
+        <div>3D Mode: Use arrow keys to rotate</div>
         <div id="coordinates"></div>
         <div id="zoomLevel"></div>
     </div>

@@ -48,6 +48,8 @@ class MandelbrotExplorer {
 
         this.setupCanvas();
         this.setupEventListeners();
+        this.setupControlsToggle();
+        this.setup3DKeyboardControls();
         this.render();
     }
 
@@ -205,6 +207,115 @@ class MandelbrotExplorer {
             this.heightScale = parseInt((e.target as HTMLInputElement).value);
             heightScaleValue.textContent = this.heightScale.toString();
             if (this.is3DMode) this.render();
+        });
+    }
+
+    private setupControlsToggle(): void {
+        const toggleButton = document.getElementById('toggleControls') as HTMLButtonElement;
+        const controlsContent = document.getElementById('controlsContent') as HTMLDivElement;
+
+        if (!toggleButton || !controlsContent) {
+            console.error('Toggle button or controls content not found');
+            return;
+        }
+
+        let isHidden = false;
+
+        toggleButton.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            isHidden = !isHidden;
+            console.log('Toggle clicked, isHidden:', isHidden);
+
+            if (isHidden) {
+                controlsContent.style.display = 'none';
+                toggleButton.textContent = '+';
+                toggleButton.title = 'Show Controls';
+            } else {
+                controlsContent.style.display = 'block';
+                toggleButton.textContent = '−';
+                toggleButton.title = 'Hide Controls';
+            }
+        });
+
+        // Also allow keyboard shortcut (H key) to toggle
+        document.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'h' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                // Only trigger if not focused on an input element
+                const activeElement = document.activeElement;
+                if (activeElement?.tagName !== 'INPUT' && activeElement?.tagName !== 'SELECT') {
+                    toggleButton.click();
+                }
+            }
+        });
+    }
+
+    private setup3DKeyboardControls(): void {
+        document.addEventListener('keydown', (e) => {
+            console.log('Key pressed:', e.key, 'is3DMode:', this.is3DMode);
+
+            // Only work in 3D mode and when no input/slider is focused
+            if (!this.is3DMode) {
+                console.log('Not in 3D mode, ignoring');
+                return;
+            }
+
+            const activeElement = document.activeElement;
+            console.log('Active element:', activeElement?.tagName, activeElement?.id);
+
+            if (activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'SELECT') {
+                console.log('Input focused, ignoring arrow keys');
+                return;
+            }
+
+            let rotationChanged = false;
+            const rotationStep = 5; // degrees per key press
+
+            switch (e.key) {
+                case 'ArrowUp':
+                    console.log('Arrow Up pressed');
+                    e.preventDefault();
+                    this.rotationX = Math.min(90, this.rotationX + rotationStep);
+                    rotationChanged = true;
+                    break;
+                case 'ArrowDown':
+                    console.log('Arrow Down pressed');
+                    e.preventDefault();
+                    this.rotationX = Math.max(0, this.rotationX - rotationStep);
+                    rotationChanged = true;
+                    break;
+                case 'ArrowLeft':
+                    console.log('Arrow Left pressed');
+                    e.preventDefault();
+                    this.rotationZ = (this.rotationZ - rotationStep + 360) % 360;
+                    rotationChanged = true;
+                    break;
+                case 'ArrowRight':
+                    console.log('Arrow Right pressed');
+                    e.preventDefault();
+                    this.rotationZ = (this.rotationZ + rotationStep) % 360;
+                    rotationChanged = true;
+                    break;
+            }
+
+            if (rotationChanged) {
+                console.log('Rotation changed - X:', this.rotationX, 'Z:', this.rotationZ);
+
+                // Update the slider values and displays
+                const rotationXSlider = document.getElementById('rotationX') as HTMLInputElement;
+                const rotationXValue = document.getElementById('rotationXValue') as HTMLSpanElement;
+                const rotationZSlider = document.getElementById('rotationZ') as HTMLInputElement;
+                const rotationZValue = document.getElementById('rotationZValue') as HTMLSpanElement;
+
+                if (rotationXSlider) rotationXSlider.value = this.rotationX.toString();
+                if (rotationXValue) rotationXValue.textContent = this.rotationX.toString();
+                if (rotationZSlider) rotationZSlider.value = this.rotationZ.toString();
+                if (rotationZValue) rotationZValue.textContent = this.rotationZ.toString();
+
+                // Re-render the 3D view
+                this.render();
+            }
         });
     }
 
