@@ -10,15 +10,23 @@ class MandelbrotExplorer {
     private viewport: ViewPort;
     private colorScheme: ColorScheme = 'classic';
     private is3DMode = false;
-    private rotationX = 30;
+    private rotationX = 80;
     private rotationY = 0;
-    private rotationZ = 45;
+    private rotationZ = 180;
     private heightScale = 50;
     private iterationData: number[][] = [];
-    
+
     private isDragging = false;
     private dragStart: { x: number, y: number } | null = null;
     private dragEnd: { x: number, y: number } | null = null;
+
+    // Rectangle selection for 3D heightmap
+    private isRectangleSelectionMode = false;
+    private selectedRectangle: {
+        startX: number, startY: number,
+        endX: number, endY: number,
+        viewport: ViewPort
+    } | null = null;
 
     constructor() {
         this.canvas = document.getElementById('canvas') as HTMLCanvasElement;
@@ -130,11 +138,37 @@ class MandelbrotExplorer {
         // 3D mode controls
         const render3DCheckbox = document.getElementById('render3D') as HTMLInputElement;
         const controls3D = document.getElementById('3dControls') as HTMLDivElement;
-        
+
         render3DCheckbox.addEventListener('change', (e) => {
             this.is3DMode = (e.target as HTMLInputElement).checked;
             controls3D.style.display = this.is3DMode ? 'block' : 'none';
+            // Disable rectangle selection when entering 3D mode
+            if (this.is3DMode) {
+                this.isRectangleSelectionMode = false;
+                (document.getElementById('rectangleSelection') as HTMLInputElement).checked = false;
+            }
             this.render();
+        });
+
+        // Rectangle selection controls
+        const rectangleSelectionCheckbox = document.getElementById('rectangleSelection') as HTMLInputElement;
+        rectangleSelectionCheckbox.addEventListener('change', (e) => {
+            this.isRectangleSelectionMode = (e.target as HTMLInputElement).checked;
+            // Disable 3D mode when entering rectangle selection mode
+            if (this.isRectangleSelectionMode) {
+                this.is3DMode = false;
+                render3DCheckbox.checked = false;
+                controls3D.style.display = 'none';
+            }
+            this.selectedRectangle = null; // Clear any existing selection
+            this.render();
+        });
+
+        const render3DFromRectangleButton = document.getElementById('render3DFromRectangle') as HTMLButtonElement;
+        render3DFromRectangleButton.addEventListener('click', () => {
+            if (this.selectedRectangle) {
+                this.render3DFromSelectedRectangle();
+            }
         });
 
         const rotationXSlider = document.getElementById('rotationX') as HTMLInputElement;
@@ -166,7 +200,7 @@ class MandelbrotExplorer {
 
         const heightScaleSlider = document.getElementById('heightScale') as HTMLInputElement;
         const heightScaleValue = document.getElementById('heightScaleValue') as HTMLSpanElement;
-        
+
         heightScaleSlider.addEventListener('input', (e) => {
             this.heightScale = parseInt((e.target as HTMLInputElement).value);
             heightScaleValue.textContent = this.heightScale.toString();
@@ -203,29 +237,47 @@ class MandelbrotExplorer {
 
     private handleMouseUp(e: MouseEvent): void {
         if (this.isDragging && this.dragStart && this.dragEnd && !this.is3DMode) {
-            const scale = 4 / (this.viewport.zoom * Math.min(this.canvas.width, this.canvas.height));
-            
             const startX = Math.min(this.dragStart.x, this.dragEnd.x);
             const endX = Math.max(this.dragStart.x, this.dragEnd.x);
             const startY = Math.min(this.dragStart.y, this.dragEnd.y);
             const endY = Math.max(this.dragStart.y, this.dragEnd.y);
-            
-            const centerX = (startX + endX) / 2;
-            const centerY = (startY + endY) / 2;
-            
-            this.viewport.centerX += (centerX - this.canvas.width / 2) * scale;
-            this.viewport.centerY += (centerY - this.canvas.height / 2) * scale;
-            
-            const zoomFactor = Math.max(
-                (endX - startX) / this.canvas.width,
-                (endY - startY) / this.canvas.height
-            );
-            
-            this.viewport.zoom /= zoomFactor;
-            
-            this.render();
+
+            if (this.isRectangleSelectionMode) {
+                // Store the selected rectangle for 3D rendering
+                this.selectedRectangle = {
+                    startX,
+                    startY,
+                    endX,
+                    endY,
+                    viewport: { ...this.viewport } // Store current viewport
+                };
+
+                // Enable the render 3D button
+                (document.getElementById('render3DFromRectangle') as HTMLButtonElement).disabled = false;
+
+                // Show selection with different color
+                this.drawRectangleSelection();
+            } else {
+                // Normal zoom behavior
+                const scale = 4 / (this.viewport.zoom * Math.min(this.canvas.width, this.canvas.height));
+
+                const centerX = (startX + endX) / 2;
+                const centerY = (startY + endY) / 2;
+
+                this.viewport.centerX += (centerX - this.canvas.width / 2) * scale;
+                this.viewport.centerY += (centerY - this.canvas.height / 2) * scale;
+
+                const zoomFactor = Math.max(
+                    (endX - startX) / this.canvas.width,
+                    (endY - startY) / this.canvas.height
+                );
+
+                this.viewport.zoom /= zoomFactor;
+
+                this.render();
+            }
         }
-        
+
         this.isDragging = false;
         this.dragStart = null;
         this.dragEnd = null;
@@ -256,17 +308,45 @@ class MandelbrotExplorer {
 
     private drawSelectionBox(): void {
         this.render();
-        
+
         if (this.dragStart && this.dragEnd) {
-            this.ctx.strokeStyle = 'white';
-            this.ctx.lineWidth = 1;
+            // Different colors for different modes
+            this.ctx.strokeStyle = this.isRectangleSelectionMode ? 'cyan' : 'white';
+            this.ctx.lineWidth = 2;
             this.ctx.setLineDash([5, 5]);
-            
+
             const width = this.dragEnd.x - this.dragStart.x;
             const height = this.dragEnd.y - this.dragStart.y;
-            
+
             this.ctx.strokeRect(this.dragStart.x, this.dragStart.y, width, height);
             this.ctx.setLineDash([]);
+
+            // Add text label for rectangle selection mode
+            if (this.isRectangleSelectionMode) {
+                this.ctx.fillStyle = 'cyan';
+                this.ctx.font = '14px Arial';
+                this.ctx.fillText('3D Selection', this.dragStart.x, this.dragStart.y - 5);
+            }
+        }
+    }
+
+    private drawRectangleSelection(): void {
+        this.render();
+
+        if (this.selectedRectangle) {
+            this.ctx.strokeStyle = 'lime';
+            this.ctx.lineWidth = 3;
+            this.ctx.setLineDash([]);
+
+            const width = this.selectedRectangle.endX - this.selectedRectangle.startX;
+            const height = this.selectedRectangle.endY - this.selectedRectangle.startY;
+
+            this.ctx.strokeRect(this.selectedRectangle.startX, this.selectedRectangle.startY, width, height);
+
+            // Add text label
+            this.ctx.fillStyle = 'lime';
+            this.ctx.font = '16px Arial';
+            this.ctx.fillText('Selected for 3D', this.selectedRectangle.startX, this.selectedRectangle.startY - 5);
         }
     }
 
@@ -356,6 +436,74 @@ class MandelbrotExplorer {
         }
 
         return maxIterations;
+    }
+
+    private render3DFromSelectedRectangle(): void {
+        if (!this.selectedRectangle) return;
+
+        const loading = document.getElementById('loading') as HTMLDivElement;
+        loading.style.display = 'block';
+
+        setTimeout(() => {
+            // Calculate the heightmap from the selected rectangle
+            const heightMap = this.createHeightMapFromRectangle();
+
+            // Switch to 3D mode
+            this.is3DMode = true;
+            (document.getElementById('render3D') as HTMLInputElement).checked = true;
+            (document.getElementById('3dControls') as HTMLDivElement).style.display = 'block';
+
+            // Disable rectangle selection mode
+            this.isRectangleSelectionMode = false;
+            (document.getElementById('rectangleSelection') as HTMLInputElement).checked = false;
+            (document.getElementById('render3DFromRectangle') as HTMLButtonElement).disabled = true;
+
+            // Render the 3D heightmap
+            this.renderer3D.renderFromHeightMap(
+                heightMap,
+                this.colorScheme,
+                this.rotationX,
+                this.rotationY,
+                this.rotationZ,
+                this.heightScale
+            );
+
+            loading.style.display = 'none';
+        }, 0);
+    }
+
+    private createHeightMapFromRectangle(): number[][] {
+        if (!this.selectedRectangle) return [];
+
+        const rect = this.selectedRectangle;
+        const width = rect.endX - rect.startX;
+        const height = rect.endY - rect.startY;
+
+        // Get the image data from the selected rectangle
+        const imageData = this.ctx.getImageData(rect.startX, rect.startY, width, height);
+        const data = imageData.data;
+
+        const heightMap: number[][] = [];
+
+        for (let y = 0; y < height; y++) {
+            heightMap[y] = [];
+            for (let x = 0; x < width; x++) {
+                const pixelIndex = (y * width + x) * 4;
+                const r = data[pixelIndex];
+                const g = data[pixelIndex + 1];
+                const b = data[pixelIndex + 2];
+
+                // Convert to grayscale (luminance)
+                const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+
+                // Invert so black (0) becomes highest (1) and white (255) becomes lowest (0)
+                const heightValue = (255 - luminance) / 255;
+
+                heightMap[y][x] = heightValue;
+            }
+        }
+
+        return heightMap;
     }
 }
 
