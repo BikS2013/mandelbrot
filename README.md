@@ -1,3 +1,9 @@
+## books 
+[The Beauty of Fractals-Images of Complex Dynamical Systems](https://drive.google.com/file/d/1pnIvotv1NUj5KGWoTgSjydTwUGXn23Ky/view?usp=drive_link)
+
+[the beauty of fractals](https://drive.google.com/file/d/1KuDZ4T4liLHpd6lOs0Z1Vbx5nD26407t/view?usp=drive_link)
+
+
 # Mandelbrot Set Explorer
 
 A TypeScript-based interactive explorer for the Mandelbrot set with real-time rendering and multiple color schemes.
