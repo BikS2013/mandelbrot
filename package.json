@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "TypeScript-based Mandelbrot set explorer",
   "main": "dist/index.js",
+  "bin": {
+    "mandelbrot": "./bin/mandelbrot"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "node dev.js",

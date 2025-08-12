@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+
+const { spawn } = require('child_process');
+const path = require('path');
+
+// Get the directory where the actual server files are located
+const serverDir = path.join(__dirname, '..');
+const serverFile = path.join(serverDir, 'serve.js');
+
+console.log('Starting Mandelbrot Server...');
+
+// Change to the server directory and run the server
+const server = spawn('node', [serverFile], {
+    cwd: serverDir,
+    stdio: 'inherit'
+});
+
+server.on('error', (err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+});
+
+server.on('exit', (code) => {
+    process.exit(code);
+});
+
+// Handle SIGINT (Ctrl+C) to gracefully shut down
+process.on('SIGINT', () => {
+    server.kill('SIGINT');
+});
