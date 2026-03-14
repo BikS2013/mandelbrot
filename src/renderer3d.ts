@@ -24,8 +24,12 @@ export class Renderer3D {
     private ctx: CanvasRenderingContext2D;
     private width: number;
     private height: number;
-    private gridResolution: number = 1; // Higher resolution for smoother surfaces
-    private smoothingRadius: number = 2; // Radius for Gaussian smoothing
+    private gridResolution: number = 3; // Higher resolution for smoother surfaces
+    private smoothingRadius: number = 4; // Radius for Gaussian smoothing
+    private smoothingPasses: number = 2; // Number of Gaussian smoothing passes
+    private medianFilterRadius: number = 2; // Radius for median filter
+    private specularStrength: number = 0.4; // Specular highlight coefficient
+    private readonly shininess: number = 40; // Specular shininess exponent
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -48,7 +52,7 @@ export class Renderer3D {
         rotationY: number,
         rotationZ: number,
         heightScale: number,
-        smoothingLevel: number = 2
+        smoothingLevel: number = 4
     ): void {
         // Update dimensions in case canvas was resized
         this.width = this.canvas.width;
@@ -99,10 +103,14 @@ export class Renderer3D {
     }
 
     private drawBackground(): void {
-        // Create a subtle gradient background
+        // Warm sunset gradient background: dark at top, warm amber at bottom
         const gradient = this.ctx.createLinearGradient(0, 0, 0, this.height);
-        gradient.addColorStop(0, '#0a0a0a');
-        gradient.addColorStop(1, '#1a1a2e');
+        gradient.addColorStop(0, '#1a0f0a');      // Dark brown/black at top
+        gradient.addColorStop(0.3, '#2d1810');    // Deep brown
+        gradient.addColorStop(0.5, '#4a2818');    // Brown
+        gradient.addColorStop(0.7, '#8a4520');    // Orange-brown
+        gradient.addColorStop(0.85, '#c9692a');   // Warm orange
+        gradient.addColorStop(1.0, '#e89a5a');    // Light amber at bottom
         this.ctx.fillStyle = gradient;
         this.ctx.fillRect(0, 0, this.width, this.height);
     }
@@ -111,8 +119,13 @@ export class Renderer3D {
         const gridWidth = Math.floor(this.width / this.gridResolution);
         const gridHeight = Math.floor(this.height / this.gridResolution);
 
-        // First, create a smooth height map using interpolation and smoothing
-        const smoothHeightMap = this.createSmoothHeightMap(iterationData, maxIterations, heightScale);
+        // Downsample iteration data using area averaging
+        const downsampledData = this.downsampleWithAreaAverage(
+            iterationData, this.width, iterationData.length, this.gridResolution
+        );
+
+        // Create smooth height map at downsampled resolution
+        const smoothHeightMap = this.createSmoothHeightMap(downsampledData, maxIterations, heightScale);
 
         const grid: Point3D[][] = [];
 
@@ -122,8 +135,8 @@ export class Renderer3D {
                 const x = gridX * this.gridResolution;
                 const y = gridY * this.gridResolution;
 
-                if (y < smoothHeightMap.length && x < smoothHeightMap[0].length) {
-                    const smoothedHeight = smoothHeightMap[y][x];
+                if (gridY < smoothHeightMap.length && gridX < smoothHeightMap[0].length) {
+                    const smoothedHeight = smoothHeightMap[gridY][gridX];
                     const iterations = this.getInterpolatedIterations(iterationData, x, y);
 
                     grid[gridY][gridX] = {
@@ -139,6 +152,44 @@ export class Renderer3D {
         }
 
         return grid;
+    }
+
+    private downsampleWithAreaAverage(
+        iterationData: number[][],
+        width: number,
+        height: number,
+        gridResolution: number
+    ): number[][] {
+        const gridWidth = Math.floor(width / gridResolution);
+        const gridHeight = Math.floor(height / gridResolution);
+        const downsampled: number[][] = [];
+
+        for (let gridY = 0; gridY < gridHeight; gridY++) {
+            downsampled[gridY] = [];
+            for (let gridX = 0; gridX < gridWidth; gridX++) {
+                let sum = 0;
+                let count = 0;
+
+                // Average all pixels within this grid cell
+                const startY = gridY * gridResolution;
+                const startX = gridX * gridResolution;
+                const endY = Math.min(startY + gridResolution, height);
+                const endX = Math.min(startX + gridResolution, width);
+
+                for (let y = startY; y < endY; y++) {
+                    for (let x = startX; x < endX; x++) {
+                        if (iterationData[y] && iterationData[y][x] !== undefined) {
+                            sum += iterationData[y][x];
+                            count++;
+                        }
+                    }
+                }
+
+                downsampled[gridY][gridX] = count > 0 ? sum / count : 0;
+            }
+        }
+
+        return downsampled;
     }
 
     private createGridPointsFromHeightMap(heightMap: number[][], heightScale: number): Point3D[][] {
@@ -183,9 +234,9 @@ export class Renderer3D {
     private createSmoothHeightMap(iterationData: number[][], maxIterations: number, heightScale: number): number[][] {
         const height = iterationData.length;
         const width = iterationData[0]?.length || 0;
-        const heightMap: number[][] = [];
+        let heightMap: number[][] = [];
 
-        // First pass: create initial height map with smooth height function
+        // Step 1: Calculate heights via power-law curve
         for (let y = 0; y < height; y++) {
             heightMap[y] = [];
             for (let x = 0; x < width; x++) {
@@ -198,101 +249,155 @@ export class Renderer3D {
             }
         }
 
-        // Second pass: apply Gaussian smoothing
-        return this.applyGaussianSmoothing(heightMap);
+        // Step 2: Apply median filter to remove spike artifacts
+        heightMap = this.applyMedianFilter(heightMap, this.medianFilterRadius);
+
+        // Step 3: Apply Gaussian smoothing N times
+        const sigma = this.smoothingRadius / 2;
+        heightMap = this.applyGaussianSmoothing(heightMap, this.smoothingRadius, sigma, this.smoothingPasses);
+
+        return heightMap;
     }
 
     private calculateSmoothHeight(iterations: number, maxIterations: number, heightScale: number): number {
-        if (iterations === maxIterations) {
-            return 0; // Points in the set are at sea level
+        if (iterations >= maxIterations) {
+            return 0;
         }
-
-        const normalizedIterations = iterations / maxIterations;
-
-        // Use smoother functions that reduce dramatic height differences
-        // Apply a smoothing factor that increases with max iterations to prevent gaps
-        const smoothingFactor = Math.min(1.0, maxIterations / 100); // More smoothing for higher iterations
-
-        const exponential = Math.pow(1 - normalizedIterations, 0.3 + smoothingFactor * 0.2);
-        const logarithmic = Math.log(1 + (1 - normalizedIterations) * 4) / Math.log(5); // Reduced steepness
-        const sinusoidal = Math.sin((1 - normalizedIterations) * Math.PI / 2);
-
-        // Blend the functions with more emphasis on smoother curves
-        const blended = (exponential * 0.5 + logarithmic * 0.3 + sinusoidal * 0.2);
-
-        // Apply additional smoothing for high iteration counts
-        const finalHeight = heightScale * blended;
-        return finalHeight * (1 - smoothingFactor * 0.3); // Reduce overall height variation
+        const ratio = iterations / maxIterations;
+        return heightScale * Math.pow(1 - ratio, 0.5);
     }
 
-    private applyGaussianSmoothing(heightMap: number[][]): number[][] {
+    private applyGaussianSmoothing(heightMap: number[][], radius: number, sigma: number, passes: number): number[][] {
         const height = heightMap.length;
         const width = heightMap[0]?.length || 0;
-        const smoothed: number[][] = [];
-        const radius = this.smoothingRadius;
 
-        // Create Gaussian kernel
-        const kernel: number[][] = [];
-        const sigma = radius / 3;
+        // Build 1D Gaussian kernel
+        const kernelSize = 2 * radius + 1;
+        const kernel: number[] = [];
         let kernelSum = 0;
 
-        for (let ky = -radius; ky <= radius; ky++) {
-            kernel[ky + radius] = [];
-            for (let kx = -radius; kx <= radius; kx++) {
-                const distance = Math.sqrt(kx * kx + ky * ky);
-                const value = Math.exp(-(distance * distance) / (2 * sigma * sigma));
-                kernel[ky + radius][kx + radius] = value;
-                kernelSum += value;
-            }
+        for (let i = -radius; i <= radius; i++) {
+            const value = Math.exp(-(i * i) / (2 * sigma * sigma));
+            kernel[i + radius] = value;
+            kernelSum += value;
         }
 
         // Normalize kernel
-        for (let ky = 0; ky < kernel.length; ky++) {
-            for (let kx = 0; kx < kernel[ky].length; kx++) {
-                kernel[ky][kx] /= kernelSum;
-            }
+        for (let i = 0; i < kernelSize; i++) {
+            kernel[i] /= kernelSum;
         }
 
-        // Apply smoothing
+        let result = heightMap;
+
+        for (let pass = 0; pass < passes; pass++) {
+            result = this.convolve1DHorizontal(result, kernel, radius);
+            result = this.convolve1DVertical(result, kernel, radius);
+        }
+
+        return result;
+    }
+
+    private convolve1DHorizontal(data: number[][], kernel: number[], radius: number): number[][] {
+        const height = data.length;
+        const width = data[0]?.length || 0;
+        const result: number[][] = [];
+
         for (let y = 0; y < height; y++) {
-            smoothed[y] = [];
+            result[y] = [];
             for (let x = 0; x < width; x++) {
                 let sum = 0;
                 let weightSum = 0;
 
-                for (let ky = -radius; ky <= radius; ky++) {
-                    for (let kx = -radius; kx <= radius; kx++) {
-                        const ny = y + ky;
-                        const nx = x + kx;
-
-                        if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
-                            const weight = kernel[ky + radius][kx + radius];
-                            sum += heightMap[ny][nx] * weight;
-                            weightSum += weight;
-                        }
-                    }
+                for (let k = -radius; k <= radius; k++) {
+                    const nx = Math.max(0, Math.min(width - 1, x + k));
+                    const weight = kernel[k + radius];
+                    sum += data[y][nx] * weight;
+                    weightSum += weight;
                 }
 
-                smoothed[y][x] = weightSum > 0 ? sum / weightSum : heightMap[y][x];
+                result[y][x] = weightSum > 0 ? sum / weightSum : data[y][x];
             }
         }
 
-        return smoothed;
+        return result;
+    }
+
+    private convolve1DVertical(data: number[][], kernel: number[], radius: number): number[][] {
+        const height = data.length;
+        const width = data[0]?.length || 0;
+        const result: number[][] = [];
+
+        for (let y = 0; y < height; y++) {
+            result[y] = [];
+            for (let x = 0; x < width; x++) {
+                let sum = 0;
+                let weightSum = 0;
+
+                for (let k = -radius; k <= radius; k++) {
+                    const ny = Math.max(0, Math.min(height - 1, y + k));
+                    const weight = kernel[k + radius];
+                    sum += data[ny][x] * weight;
+                    weightSum += weight;
+                }
+
+                result[y][x] = weightSum > 0 ? sum / weightSum : data[y][x];
+            }
+        }
+
+        return result;
+    }
+
+    private applyMedianFilter(heightMap: number[][], radius: number): number[][] {
+        const height = heightMap.length;
+        const width = heightMap[0]?.length || 0;
+        const result: number[][] = [];
+
+        for (let y = 0; y < height; y++) {
+            result[y] = [];
+            for (let x = 0; x < width; x++) {
+                const values: number[] = [];
+
+                for (let ky = -radius; ky <= radius; ky++) {
+                    for (let kx = -radius; kx <= radius; kx++) {
+                        // Clamp coordinates (edge replication)
+                        const ny = Math.max(0, Math.min(height - 1, y + ky));
+                        const nx = Math.max(0, Math.min(width - 1, x + kx));
+                        values.push(heightMap[ny][nx]);
+                    }
+                }
+
+                // Sort ascending and take median
+                values.sort((a, b) => a - b);
+                result[y][x] = values[Math.floor(values.length / 2)];
+            }
+        }
+
+        return result;
     }
 
     private getInterpolatedIterations(iterationData: number[][], x: number, y: number): number {
         const height = iterationData.length;
         const width = iterationData[0]?.length || 0;
 
-        // Clamp coordinates
-        const clampedY = Math.max(0, Math.min(height - 1, Math.floor(y)));
-        const clampedX = Math.max(0, Math.min(width - 1, Math.floor(x)));
+        // Get integer and fractional parts
+        const x0 = Math.max(0, Math.min(width - 2, Math.floor(x)));
+        const y0 = Math.max(0, Math.min(height - 2, Math.floor(y)));
+        const x1 = x0 + 1;
+        const y1 = y0 + 1;
 
-        if (iterationData[clampedY] && iterationData[clampedY][clampedX] !== undefined) {
-            return iterationData[clampedY][clampedX];
-        }
+        const fx = x - Math.floor(x); // Fractional part [0, 1)
+        const fy = y - Math.floor(y);
 
-        return 0;
+        // Get four surrounding values
+        const v00 = (iterationData[y0] && iterationData[y0][x0] !== undefined) ? iterationData[y0][x0] : 0;
+        const v10 = (iterationData[y0] && iterationData[y0][x1] !== undefined) ? iterationData[y0][x1] : 0;
+        const v01 = (iterationData[y1] && iterationData[y1][x0] !== undefined) ? iterationData[y1][x0] : 0;
+        const v11 = (iterationData[y1] && iterationData[y1][x1] !== undefined) ? iterationData[y1][x1] : 0;
+
+        // Bilinear interpolation
+        const top = v00 * (1 - fx) + v10 * fx;
+        const bottom = v01 * (1 - fx) + v11 * fx;
+        return top * (1 - fy) + bottom * fy;
     }
 
     private transformAndProject(gridPoints: Point3D[][], rotationX: number, rotationY: number, rotationZ: number): ProjectedPoint[][] {
@@ -465,15 +570,45 @@ export class Renderer3D {
             intensity1 * 0.6 + intensity2 * 0.25 + intensity3 * 0.15
         );
 
+        // Specular highlight (Phong model, primary light only)
+        // Normalize the primary light direction
+        const lightLen1 = Math.sqrt(
+            lightDir1.x * lightDir1.x + lightDir1.y * lightDir1.y + lightDir1.z * lightDir1.z
+        );
+        const normLight1 = {
+            x: lightDir1.x / lightLen1,
+            y: lightDir1.y / lightLen1,
+            z: lightDir1.z / lightLen1
+        };
+
+        // View direction (camera looks down +Z axis)
+        const viewDir = { x: 0, y: 0, z: 1 };
+
+        // Reflection vector: R = 2 * (N dot L) * N - L
+        const nDotL = Math.max(0,
+            normal.x * normLight1.x + normal.y * normLight1.y + normal.z * normLight1.z
+        );
+        const reflectDir = {
+            x: 2 * nDotL * normal.x - normLight1.x,
+            y: 2 * nDotL * normal.y - normLight1.y,
+            z: 2 * nDotL * normal.z - normLight1.z
+        };
+
+        // Specular intensity
+        const specDot = Math.max(0,
+            reflectDir.x * viewDir.x + reflectDir.y * viewDir.y + reflectDir.z * viewDir.z
+        );
+        const specular = this.specularStrength * Math.pow(specDot, this.shininess);
+
         // Get base color with smooth interpolation between vertex colors
         const avgIterations = (p1.iterations + p2.iterations + p3.iterations) / 3;
         const baseColor = ColorSchemes.getColor(avgIterations, maxIterations, colorScheme);
 
-        // Apply lighting with gamma correction for more realistic shading
+        // Apply lighting with gamma correction and specular highlight
         const gamma = 2.2;
-        const r = Math.floor(255 * Math.pow((baseColor.r / 255) * lightIntensity, 1 / gamma));
-        const g = Math.floor(255 * Math.pow((baseColor.g / 255) * lightIntensity, 1 / gamma));
-        const b = Math.floor(255 * Math.pow((baseColor.b / 255) * lightIntensity, 1 / gamma));
+        const r = Math.floor(255 * Math.min(1.0, Math.pow((baseColor.r / 255) * lightIntensity, 1 / gamma) + specular));
+        const g = Math.floor(255 * Math.min(1.0, Math.pow((baseColor.g / 255) * lightIntensity, 1 / gamma) + specular));
+        const b = Math.floor(255 * Math.min(1.0, Math.pow((baseColor.b / 255) * lightIntensity, 1 / gamma) + specular));
 
         // Draw triangle with anti-aliasing hint and adaptive stroke to eliminate gaps
         this.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
@@ -492,13 +627,6 @@ export class Renderer3D {
         this.ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
         this.ctx.lineWidth = strokeWidth;
         this.ctx.stroke();
-
-        // Edge smoothing disabled for clean surface appearance
-        // if (lightIntensity > 0.3) {
-        //     this.ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
-        //     this.ctx.lineWidth = 0.5;
-        //     this.ctx.stroke();
-        // }
     }
 
     private renderTriangleFromHeight(points: ProjectedPoint[], heightValue: number, colorScheme: ColorScheme): void {
@@ -539,15 +667,41 @@ export class Renderer3D {
             intensity1 * 0.6 + intensity2 * 0.25 + intensity3 * 0.15
         );
 
+        // Specular highlight (Phong model, primary light only)
+        const lightLen1 = Math.sqrt(
+            lightDir1.x * lightDir1.x + lightDir1.y * lightDir1.y + lightDir1.z * lightDir1.z
+        );
+        const normLight1 = {
+            x: lightDir1.x / lightLen1,
+            y: lightDir1.y / lightLen1,
+            z: lightDir1.z / lightLen1
+        };
+
+        const viewDir = { x: 0, y: 0, z: 1 };
+
+        const nDotL = Math.max(0,
+            normal.x * normLight1.x + normal.y * normLight1.y + normal.z * normLight1.z
+        );
+        const reflectDir = {
+            x: 2 * nDotL * normal.x - normLight1.x,
+            y: 2 * nDotL * normal.y - normLight1.y,
+            z: 2 * nDotL * normal.z - normLight1.z
+        };
+
+        const specDot = Math.max(0,
+            reflectDir.x * viewDir.x + reflectDir.y * viewDir.y + reflectDir.z * viewDir.z
+        );
+        const specular = this.specularStrength * Math.pow(specDot, this.shininess);
+
         // Get base color from height value (treat as pseudo-iterations)
         const pseudoIterations = Math.floor(heightValue * 100);
         const baseColor = ColorSchemes.getColor(pseudoIterations, 100, colorScheme);
 
-        // Apply lighting with gamma correction for more realistic shading
+        // Apply lighting with gamma correction and specular highlight
         const gamma = 2.2;
-        const r = Math.floor(255 * Math.pow((baseColor.r / 255) * lightIntensity, 1 / gamma));
-        const g = Math.floor(255 * Math.pow((baseColor.g / 255) * lightIntensity, 1 / gamma));
-        const b = Math.floor(255 * Math.pow((baseColor.b / 255) * lightIntensity, 1 / gamma));
+        const r = Math.floor(255 * Math.min(1.0, Math.pow((baseColor.r / 255) * lightIntensity, 1 / gamma) + specular));
+        const g = Math.floor(255 * Math.min(1.0, Math.pow((baseColor.g / 255) * lightIntensity, 1 / gamma) + specular));
+        const b = Math.floor(255 * Math.min(1.0, Math.pow((baseColor.b / 255) * lightIntensity, 1 / gamma) + specular));
 
         // Draw triangle with anti-aliasing hint and adaptive stroke to eliminate gaps
         this.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;

@@ -540,8 +540,13 @@ class MandelbrotExplorer {
             z.imag = 2 * z.real * z.imag + c.imag;
             z.real = realTemp;
 
-            if (z.real * z.real + z.imag * z.imag > 4) {
-                return n;
+            const magnitudeSquared = z.real * z.real + z.imag * z.imag;
+            if (magnitudeSquared > 65536) {
+                // Normalized iteration count (smooth coloring)
+                // Formula: n + 1 - log2(log2(|z|^2) / 2)
+                // Equivalent to: n + 1 - log2(log2(|z|)) which is the standard smooth iteration formula
+                const smoothValue = n + 1 - Math.log2(Math.log2(magnitudeSquared) / 2);
+                return Math.max(0, smoothValue);
             }
             n++;
         }
