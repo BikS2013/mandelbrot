@@ -184,6 +184,15 @@ the cached 2D image (selection overlay strokes must not leak into heights), and
 must survive rotation / recolor / height-scale changes without being replaced
 by the viewport surface.
 
+### FR-3D-015: View Side Selection (Above / Underside)
+**Priority:** Low — **Status:** Implemented — **Files:** `src/renderer3d.ts`, `src/index.ts`, `index.html`
+
+A "View from Underside" checkbox in the 3D controls lets the user choose the
+camera side. Default (unchecked) is the above-surface view. The switch is a
+draw-time concern only — `Renderer3D.setViewSide('above' | 'below')` flips the
+view-depth sign and the specular view direction; no fractal resampling occurs,
+so toggling redraws instantly from the cached surface.
+
 ### FR-3D-014: Orbit-Correct Rotation Semantics
 **Priority:** Medium — **Status:** Implemented — **Files:** `src/renderer3d.ts`
 

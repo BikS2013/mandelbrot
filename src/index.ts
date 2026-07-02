@@ -226,6 +226,13 @@ class MandelbrotExplorer {
             if (this.is3DMode) this.requestDraw('high');
         });
 
+        const viewUndersideCheckbox = document.getElementById('viewUnderside') as HTMLInputElement;
+        viewUndersideCheckbox.addEventListener('change', (e) => {
+            const underside = (e.target as HTMLInputElement).checked;
+            this.renderer3D.setViewSide(underside ? 'below' : 'above');
+            if (this.is3DMode) this.requestDraw('high');
+        });
+
         const heightScaleSlider = document.getElementById('heightScale') as HTMLInputElement;
         const heightScaleValue = document.getElementById('heightScaleValue') as HTMLSpanElement;
 

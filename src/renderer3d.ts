@@ -8,6 +8,8 @@ export type IterationSampler = (px: number, py: number) => number;
 
 export type DrawQuality = 'high' | 'fast';
 
+export type ViewSide = 'above' | 'below';
+
 interface Vec3 {
     x: number;
     y: number;
@@ -67,6 +69,7 @@ export class Renderer3D {
 
     private readonly cameraDistance = 800;
     private viewZoom = 1;
+    private viewSide: ViewSide = 'above';
 
     // Cached scene
     private gridW = 0;
@@ -106,6 +109,15 @@ export class Renderer3D {
 
     public setViewZoom(zoom: number): void {
         this.viewZoom = Math.max(0.3, Math.min(4, zoom));
+    }
+
+    public getViewSide(): ViewSide {
+        return this.viewSide;
+    }
+
+    /** Chooses whether the camera orbits above or below the surface. */
+    public setViewSide(side: ViewSide): void {
+        this.viewSide = side;
     }
 
     /**
@@ -257,6 +269,9 @@ export class Renderer3D {
         const zScale = this.heightScale * this.heightBoost;
         const halfW = this.width / 2;
         const halfH = this.height / 2;
+        // -1 puts the camera above the surface (higher terrain is nearer);
+        // +1 mirrors the depth so the surface is seen from underneath.
+        const depthSign = this.viewSide === 'above' ? -1 : 1;
 
         const sx = new Float32Array(count);
         const sy = new Float32Array(count);
@@ -280,7 +295,11 @@ export class Renderer3D {
                 const x3 = x1 * cosY + wz * sinY;
                 const z1 = -x1 * sinY + wz * cosY;
                 const y3 = y1 * cosX - z1 * sinX;
-                const z2 = y1 * sinX + z1 * cosX;
+                // In 'above' mode the depth is negated so the camera sits
+                // above the surface: higher terrain is nearer, the ground row
+                // at the bottom of the screen is nearest, and occlusion is
+                // seen from above. 'below' mode mirrors the depth.
+                const z2 = depthSign * (y1 * sinX + z1 * cosX);
 
                 const denom = Math.max(50, this.cameraDistance + z2);
                 const perspective = (this.cameraDistance / denom) * this.viewZoom;
@@ -293,9 +312,11 @@ export class Renderer3D {
             }
         }
 
-        // View direction (surface -> camera) transformed into terrain space,
-        // i.e. the inverse rotation (Rx^-1, Ry^-1, Rz^-1) applied to (0, 0, -1).
-        let vwx = 0, vwy = 0, vwz = -1;
+        // View direction (surface -> camera) transformed into terrain space.
+        // The full transform is depth-sign * Rx * Ry * Rz, so the inverse
+        // applied to the view-space camera direction (0, 0, -1) reduces to
+        // (Rx^-1, Ry^-1, Rz^-1) applied to (0, 0, -depthSign).
+        let vwx = 0, vwy = 0, vwz = -depthSign;
         {
             // Rx^-1
             let ty = vwy * cosX + vwz * sinX;

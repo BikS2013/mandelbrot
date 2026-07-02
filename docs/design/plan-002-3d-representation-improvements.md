@@ -2,6 +2,16 @@
 
 **Date:** 2026-07-02
 **Status:** Implemented and Verified
+**Addendum (2026-07-02):** Post-release fix — the initial implementation had the
+view depth sign inverted in `draw()` (`z2 = y1*sinX + z1*cosX`), so the camera sat
+*below* the terrain plane and users saw the underside of the surface while
+rotating. Fixed by negating the depth (`z2 = -(...)`) and starting the inverse
+view-direction transform (used for specular) from `(0, 0, +1)` to account for the
+depth mirror. See "Issues - Pending Items.md", completed item 0.
+**Addendum 2 (2026-07-02):** The depth sign was then generalized into a
+user-facing option: a "View from Underside" checkbox in the 3D controls
+(`Renderer3D.setViewSide('above' | 'below')`, FR-3D-015). Default is the
+above-surface view; toggling is draw-only and reuses the cached surface.
 **Affected Files:** `src/renderer3d.ts` (rewritten), `src/index.ts`, `index.html`, `test_scripts/verify-smooth-rendering.ts`
 
 ---
