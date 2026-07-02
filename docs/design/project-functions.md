@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-14
 **Status:** Active
-**Last Updated:** 2026-03-14
+**Last Updated:** 2026-07-02 (Plan 002 — 3D representation improvements)
 
 ---
 
@@ -55,7 +55,7 @@ Before Gaussian smoothing, a median filter pass must be applied to the heightmap
 
 ### FR-3D-004: Grid Resolution / Mesh Downsampling
 **Priority:** Medium
-**Status:** Planned (Plan 001, Phase E)
+**Status:** Superseded by Plan 002 (FR-3D-009: the fractal is sampled directly at grid resolution with supersampling; no full-canvas pass or downsampling exists anymore)
 **Affected Files:** `src/renderer3d.ts`
 
 The default grid resolution must be increased from 1 to 3 to reduce vertex count:
@@ -69,7 +69,7 @@ The default grid resolution must be increased from 1 to 3 to reduce vertex count
 
 ### FR-3D-005: Simplified Height Mapping Function
 **Priority:** Medium
-**Status:** Planned (Plan 001, Phase B)
+**Status:** Superseded by Plan 002 (FR-3D-010: inverted to the classic mesa — interior plateau high, exterior low)
 **Affected Files:** `src/renderer3d.ts`
 
 The current multi-function blend (exponential/logarithmic/sinusoidal) in `calculateSmoothHeight()` must be replaced with a single power-law curve:
@@ -86,7 +86,7 @@ height = heightScale * pow(1 - (smoothIteration / maxIterations), exponent)
 
 ### FR-3D-006: Lighting Improvements
 **Priority:** Medium
-**Status:** Planned (Plan 001, Phase F)
+**Status:** Superseded by Plan 002 (FR-3D-011: terrain-space per-vertex normals, normalized hillshade lights, linear-space compositing)
 **Affected Files:** `src/renderer3d.ts`
 
 The lighting model must be enhanced with:
@@ -129,6 +129,67 @@ All changes must preserve:
 - The rectangle-selection-to-3D workflow must continue to work.
 - The project must build cleanly with `npm run build` (TypeScript strict mode, ES2020 target).
 - The project must serve with `npm run serve` on port 8000.
+
+---
+
+## 1b. 3D Representation Improvements (Plan 002 — 2026-07-02)
+
+Authoritative design: `docs/design/plan-002-3d-representation-improvements.md`.
+
+### FR-3D-009: Cached-Scene 3D Rendering
+**Priority:** Critical — **Status:** Implemented — **Files:** `src/renderer3d.ts`, `src/index.ts`
+
+The 3D renderer must separate surface building from drawing. The fractal is
+sampled only when the viewport, iteration count, or canvas size changes
+(`buildSurfaceFromIterations`, direct grid-resolution sampling with 2x2
+supersampling, grid capped at 300 vertices per axis). Rotation, height-scale,
+color-scheme, and 3D-zoom changes must reuse the cached surface:
+- rotation / zoom → `draw()` only (re-project + depth-sort + paint)
+- height scale → recompute normals + relight only
+- color scheme → recolor + relight only
+
+### FR-3D-010: Mesa Height Mapping
+**Priority:** Critical — **Status:** Implemented — **Files:** `src/renderer3d.ts`
+
+Normalized heights: set interior = plateau at 1.0; exterior = `(iter/max)^2.2`,
+rising steeply toward the boundary so filaments read as ridges. World height =
+`h * heightScale * 2.5`. Vertex colors derive from the smoothed height field
+(inverse of the height curve) so color bands follow terrain contours.
+
+### FR-3D-011: Terrain-Space Lighting
+**Priority:** High — **Status:** Implemented — **Files:** `src/renderer3d.ts`
+
+Smooth per-vertex normals from central differences of the smoothed height field
+(terrain space, +z up, unit length — verified by tests). Three normalized
+hillshade lights (weights 0.62/0.25/0.13), `ambientCoefficient = 0.22`,
+`specularStrength = 0.35`, `shininess = 40` as named constants. Ambient+diffuse
+baked per vertex in linear color space; per-triangle Phong specular using the
+inverse-rotated view direction; single gamma (2.2) encode at composite time.
+
+### FR-3D-012: Direct 3D Mouse Interaction
+**Priority:** High — **Status:** Implemented — **Files:** `src/index.ts`
+
+In 3D mode: drag orbits (yaw 0.4°/px, pitch 0.25°/px clamped 0–90°) with
+decimated fast-quality redraws while dragging and a high-quality redraw on
+release; scroll wheel zooms the view (0.3x–4x) with a 150 ms idle timer for the
+final high-quality pass. Sliders stay in sync; arrow keys keep working. All
+redraws are coalesced through `requestAnimationFrame`.
+
+### FR-3D-013: Heightmap Path Parity
+**Priority:** Medium — **Status:** Implemented — **Files:** `src/renderer3d.ts`, `src/index.ts`
+
+The rectangle-selection heightmap surface must run the same median + Gaussian
+smoothing and lighting pipeline as the iteration path, must be extracted from
+the cached 2D image (selection overlay strokes must not leak into heights), and
+must survive rotation / recolor / height-scale changes without being replaced
+by the viewport surface.
+
+### FR-3D-014: Orbit-Correct Rotation Semantics
+**Priority:** Medium — **Status:** Implemented — **Files:** `src/renderer3d.ts`
+
+Rotation order is yaw (Z, around the terrain up-axis) → roll (Y) → pitch (X),
+so heights always rise toward the top of the screen and yaw never flips the
+terrain vertically. Default view: pitch 60°, yaw 180°.
 
 ---
 

@@ -1,6 +1,6 @@
 import { MandelbrotCalculator, ViewPort } from './mandelbrot.js';
 import { ColorSchemes, ColorScheme } from './colorSchemes.js';
-import { Renderer3D } from './renderer3d.js';
+import { Renderer3D, DrawQuality } from './renderer3d.js';
 
 class MandelbrotExplorer {
     private canvas: HTMLCanvasElement;
@@ -10,11 +10,23 @@ class MandelbrotExplorer {
     private viewport: ViewPort;
     private colorScheme: ColorScheme = 'classic';
     private is3DMode = false;
-    private rotationX = 80;
+    private rotationX = 60;
     private rotationY = 0;
     private rotationZ = 180;
     private heightScale = 50;
-    private iterationData: number[][] = [];
+
+    // Cached 2D rendering, reused for selection overlays and heightmap capture
+    private cached2DImage: ImageData | null = null;
+
+    // 3D surface cache management: the fractal is only resampled when the
+    // viewport/iterations change, never for rotation or height changes.
+    private surfaceMode: 'viewport' | 'heightmap' = 'viewport';
+    private surfaceDirty = true;
+    private drawPending = false;
+    private nextDrawQuality: DrawQuality = 'high';
+    private isOrbiting = false;
+    private lastOrbit: { x: number, y: number } | null = null;
+    private wheelIdleTimer: number | undefined;
 
     private isDragging = false;
     private dragStart: { x: number, y: number } | null = null;
@@ -31,7 +43,7 @@ class MandelbrotExplorer {
     constructor() {
         this.canvas = document.getElementById('canvas') as HTMLCanvasElement;
         this.ctx = this.canvas.getContext('2d')!;
-        
+
         this.viewport = {
             centerX: -0.5,
             centerY: 0,
@@ -43,7 +55,7 @@ class MandelbrotExplorer {
             this.canvas.height,
             100
         );
-        
+
         this.renderer3D = new Renderer3D(this.canvas);
 
         this.setupCanvas();
@@ -62,6 +74,7 @@ class MandelbrotExplorer {
             this.canvas.width = window.innerWidth;
             this.canvas.height = window.innerHeight;
             this.calculator.setDimensions(this.canvas.width, this.canvas.height);
+            this.surfaceDirty = true;
             this.render();
         });
     }
@@ -74,18 +87,25 @@ class MandelbrotExplorer {
 
         const iterationsSlider = document.getElementById('iterations') as HTMLInputElement;
         const iterationsValue = document.getElementById('iterationsValue') as HTMLSpanElement;
-        
+
         iterationsSlider.addEventListener('input', (e) => {
             const value = (e.target as HTMLInputElement).value;
             iterationsValue.textContent = value;
             this.calculator.setMaxIterations(parseInt(value));
+            this.surfaceDirty = true;
             this.render();
         });
 
         const colorSchemeSelect = document.getElementById('colorScheme') as HTMLSelectElement;
         colorSchemeSelect.addEventListener('change', (e) => {
             this.colorScheme = (e.target as HTMLSelectElement).value as ColorScheme;
-            this.render();
+            if (this.is3DMode && this.renderer3D.hasSurface()) {
+                // Recolor the cached surface without resampling the fractal
+                this.renderer3D.setColorScheme(this.colorScheme);
+                this.requestDraw('high');
+            } else {
+                this.render();
+            }
         });
 
         const resetButton = document.getElementById('resetView') as HTMLButtonElement;
@@ -95,6 +115,7 @@ class MandelbrotExplorer {
                 centerY: 0,
                 zoom: 1
             };
+            this.surfaceDirty = true;
             this.render();
         });
 
@@ -114,6 +135,7 @@ class MandelbrotExplorer {
                 centerY: 0.1,
                 zoom: 50
             };
+            this.surfaceDirty = true;
             this.render();
         });
 
@@ -124,6 +146,7 @@ class MandelbrotExplorer {
                 centerY: 0.1889,
                 zoom: 5000
             };
+            this.surfaceDirty = true;
             this.render();
         });
 
@@ -134,6 +157,7 @@ class MandelbrotExplorer {
                 centerY: 0.156,
                 zoom: 1000
             };
+            this.surfaceDirty = true;
             this.render();
         });
 
@@ -144,6 +168,7 @@ class MandelbrotExplorer {
         render3DCheckbox.addEventListener('change', (e) => {
             this.is3DMode = (e.target as HTMLInputElement).checked;
             controls3D.style.display = this.is3DMode ? 'block' : 'none';
+            this.canvas.style.cursor = this.is3DMode ? 'grab' : 'crosshair';
             // Disable rectangle selection when entering 3D mode
             if (this.is3DMode) {
                 this.isRectangleSelectionMode = false;
@@ -161,6 +186,7 @@ class MandelbrotExplorer {
                 this.is3DMode = false;
                 render3DCheckbox.checked = false;
                 controls3D.style.display = 'none';
+                this.canvas.style.cursor = 'crosshair';
             }
             this.selectedRectangle = null; // Clear any existing selection
             this.render();
@@ -179,7 +205,7 @@ class MandelbrotExplorer {
         rotationXSlider.addEventListener('input', (e) => {
             this.rotationX = parseInt((e.target as HTMLInputElement).value);
             rotationXValue.textContent = this.rotationX.toString();
-            if (this.is3DMode) this.render();
+            if (this.is3DMode) this.requestDraw('high');
         });
 
         const rotationYSlider = document.getElementById('rotationY') as HTMLInputElement;
@@ -188,7 +214,7 @@ class MandelbrotExplorer {
         rotationYSlider.addEventListener('input', (e) => {
             this.rotationY = parseInt((e.target as HTMLInputElement).value);
             rotationYValue.textContent = this.rotationY.toString();
-            if (this.is3DMode) this.render();
+            if (this.is3DMode) this.requestDraw('high');
         });
 
         const rotationZSlider = document.getElementById('rotationZ') as HTMLInputElement;
@@ -197,7 +223,7 @@ class MandelbrotExplorer {
         rotationZSlider.addEventListener('input', (e) => {
             this.rotationZ = parseInt((e.target as HTMLInputElement).value);
             rotationZValue.textContent = this.rotationZ.toString();
-            if (this.is3DMode) this.render();
+            if (this.is3DMode) this.requestDraw('high');
         });
 
         const heightScaleSlider = document.getElementById('heightScale') as HTMLInputElement;
@@ -206,7 +232,11 @@ class MandelbrotExplorer {
         heightScaleSlider.addEventListener('input', (e) => {
             this.heightScale = parseInt((e.target as HTMLInputElement).value);
             heightScaleValue.textContent = this.heightScale.toString();
-            if (this.is3DMode) this.render();
+            if (this.is3DMode && this.renderer3D.hasSurface()) {
+                // Only normals + lighting are recomputed, not the fractal
+                this.renderer3D.setHeightScale(this.heightScale);
+                this.requestDraw('high');
+            }
         });
     }
 
@@ -226,7 +256,6 @@ class MandelbrotExplorer {
             e.stopPropagation();
 
             isHidden = !isHidden;
-            console.log('Toggle clicked, isHidden:', isHidden);
 
             if (isHidden) {
                 controlsContent.style.display = 'none';
@@ -253,19 +282,11 @@ class MandelbrotExplorer {
 
     private setup3DKeyboardControls(): void {
         document.addEventListener('keydown', (e) => {
-            console.log('Key pressed:', e.key, 'is3DMode:', this.is3DMode);
-
             // Only work in 3D mode and when no input/slider is focused
-            if (!this.is3DMode) {
-                console.log('Not in 3D mode, ignoring');
-                return;
-            }
+            if (!this.is3DMode) return;
 
             const activeElement = document.activeElement;
-            console.log('Active element:', activeElement?.tagName, activeElement?.id);
-
             if (activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'SELECT') {
-                console.log('Input focused, ignoring arrow keys');
                 return;
             }
 
@@ -274,25 +295,21 @@ class MandelbrotExplorer {
 
             switch (e.key) {
                 case 'ArrowUp':
-                    console.log('Arrow Up pressed');
                     e.preventDefault();
                     this.rotationX = Math.min(90, this.rotationX + rotationStep);
                     rotationChanged = true;
                     break;
                 case 'ArrowDown':
-                    console.log('Arrow Down pressed');
                     e.preventDefault();
                     this.rotationX = Math.max(0, this.rotationX - rotationStep);
                     rotationChanged = true;
                     break;
                 case 'ArrowLeft':
-                    console.log('Arrow Left pressed');
                     e.preventDefault();
                     this.rotationZ = (this.rotationZ - rotationStep + 360) % 360;
                     rotationChanged = true;
                     break;
                 case 'ArrowRight':
-                    console.log('Arrow Right pressed');
                     e.preventDefault();
                     this.rotationZ = (this.rotationZ + rotationStep) % 360;
                     rotationChanged = true;
@@ -300,26 +317,49 @@ class MandelbrotExplorer {
             }
 
             if (rotationChanged) {
-                console.log('Rotation changed - X:', this.rotationX, 'Z:', this.rotationZ);
+                this.sync3DSliders();
+                this.requestDraw('high');
+            }
+        });
+    }
 
-                // Update the slider values and displays
-                const rotationXSlider = document.getElementById('rotationX') as HTMLInputElement;
-                const rotationXValue = document.getElementById('rotationXValue') as HTMLSpanElement;
-                const rotationZSlider = document.getElementById('rotationZ') as HTMLInputElement;
-                const rotationZValue = document.getElementById('rotationZValue') as HTMLSpanElement;
+    private sync3DSliders(): void {
+        const rotationXSlider = document.getElementById('rotationX') as HTMLInputElement;
+        const rotationXValue = document.getElementById('rotationXValue') as HTMLSpanElement;
+        const rotationZSlider = document.getElementById('rotationZ') as HTMLInputElement;
+        const rotationZValue = document.getElementById('rotationZValue') as HTMLSpanElement;
 
-                if (rotationXSlider) rotationXSlider.value = this.rotationX.toString();
-                if (rotationXValue) rotationXValue.textContent = this.rotationX.toString();
-                if (rotationZSlider) rotationZSlider.value = this.rotationZ.toString();
-                if (rotationZValue) rotationZValue.textContent = this.rotationZ.toString();
+        const rx = Math.round(this.rotationX).toString();
+        const rz = Math.round(this.rotationZ).toString();
+        if (rotationXSlider) rotationXSlider.value = rx;
+        if (rotationXValue) rotationXValue.textContent = rx;
+        if (rotationZSlider) rotationZSlider.value = rz;
+        if (rotationZValue) rotationZValue.textContent = rz;
+    }
 
-                // Re-render the 3D view
-                this.render();
+    /**
+     * Schedules a cached-surface redraw on the next animation frame.
+     * Multiple requests per frame coalesce; the latest quality wins.
+     */
+    private requestDraw(quality: DrawQuality): void {
+        this.nextDrawQuality = quality;
+        if (this.drawPending) return;
+        this.drawPending = true;
+        requestAnimationFrame(() => {
+            this.drawPending = false;
+            if (this.is3DMode && this.renderer3D.hasSurface()) {
+                this.renderer3D.draw(this.rotationX, this.rotationY, this.rotationZ, this.nextDrawQuality);
             }
         });
     }
 
     private handleMouseDown(e: MouseEvent): void {
+        if (this.is3DMode) {
+            this.isOrbiting = true;
+            this.lastOrbit = { x: e.clientX, y: e.clientY };
+            this.canvas.style.cursor = 'grabbing';
+            return;
+        }
         this.isDragging = true;
         this.dragStart = { x: e.clientX, y: e.clientY };
     }
@@ -327,27 +367,47 @@ class MandelbrotExplorer {
     private handleMouseMove(e: MouseEvent): void {
         const coords = document.getElementById('coordinates') as HTMLDivElement;
         const zoomLevel = document.getElementById('zoomLevel') as HTMLDivElement;
-        
+
         // Always show zoom level
         zoomLevel.textContent = `Zoom: ${this.viewport.zoom.toExponential(2)}`;
-        
-        if (!this.is3DMode) {
-            const scale = 4 / (this.viewport.zoom * Math.min(this.canvas.width, this.canvas.height));
-            const real = this.viewport.centerX + (e.clientX - this.canvas.width / 2) * scale;
-            const imag = this.viewport.centerY + (e.clientY - this.canvas.height / 2) * scale;
-            coords.textContent = `Real: ${real.toFixed(6)}, Imag: ${imag.toFixed(6)}`;
-        } else {
-            coords.textContent = `3D Mode - Use sliders to rotate`;
+
+        if (this.is3DMode) {
+            coords.textContent = `Pitch ${Math.round(this.rotationX)}° • Yaw ${Math.round(this.rotationZ)}° • 3D zoom ${this.renderer3D.getViewZoom().toFixed(2)}x`;
+            if (this.isOrbiting && this.lastOrbit) {
+                const dx = e.clientX - this.lastOrbit.x;
+                const dy = e.clientY - this.lastOrbit.y;
+                this.lastOrbit = { x: e.clientX, y: e.clientY };
+                this.rotationZ = (this.rotationZ + dx * 0.4 + 360) % 360;
+                this.rotationX = Math.max(0, Math.min(90, this.rotationX - dy * 0.25));
+                this.sync3DSliders();
+                this.requestDraw('fast');
+            }
+            return;
         }
 
-        if (this.isDragging && this.dragStart && !this.is3DMode) {
+        const scale = 4 / (this.viewport.zoom * Math.min(this.canvas.width, this.canvas.height));
+        const real = this.viewport.centerX + (e.clientX - this.canvas.width / 2) * scale;
+        const imag = this.viewport.centerY + (e.clientY - this.canvas.height / 2) * scale;
+        coords.textContent = `Real: ${real.toFixed(6)}, Imag: ${imag.toFixed(6)}`;
+
+        if (this.isDragging && this.dragStart) {
             this.dragEnd = { x: e.clientX, y: e.clientY };
             this.drawSelectionBox();
         }
     }
 
     private handleMouseUp(e: MouseEvent): void {
-        if (this.isDragging && this.dragStart && this.dragEnd && !this.is3DMode) {
+        if (this.is3DMode) {
+            if (this.isOrbiting) {
+                this.isOrbiting = false;
+                this.lastOrbit = null;
+                this.canvas.style.cursor = 'grab';
+                this.requestDraw('high');
+            }
+            return;
+        }
+
+        if (this.isDragging && this.dragStart && this.dragEnd) {
             const startX = Math.min(this.dragStart.x, this.dragEnd.x);
             const endX = Math.max(this.dragStart.x, this.dragEnd.x);
             const startY = Math.min(this.dragStart.y, this.dragEnd.y);
@@ -384,6 +444,7 @@ class MandelbrotExplorer {
                 );
 
                 this.viewport.zoom /= zoomFactor;
+                this.surfaceDirty = true;
 
                 this.render();
             }
@@ -396,29 +457,50 @@ class MandelbrotExplorer {
 
     private handleWheel(e: WheelEvent): void {
         e.preventDefault();
-        
+
+        if (this.is3DMode) {
+            const factor = e.deltaY > 0 ? 0.9 : 1.1;
+            this.renderer3D.setViewZoom(this.renderer3D.getViewZoom() * factor);
+            this.requestDraw('fast');
+            // Full-quality redraw once the wheel goes idle
+            window.clearTimeout(this.wheelIdleTimer);
+            this.wheelIdleTimer = window.setTimeout(() => this.requestDraw('high'), 150);
+            return;
+        }
+
         const scale = 4 / (this.viewport.zoom * Math.min(this.canvas.width, this.canvas.height));
         const mouseX = e.clientX - this.canvas.width / 2;
         const mouseY = e.clientY - this.canvas.height / 2;
-        
+
         const realOffset = mouseX * scale;
         const imagOffset = mouseY * scale;
-        
+
         const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
         this.viewport.zoom *= zoomFactor;
-        
+
         const newScale = 4 / (this.viewport.zoom * Math.min(this.canvas.width, this.canvas.height));
         const newRealOffset = mouseX * newScale;
         const newImagOffset = mouseY * newScale;
-        
+
         this.viewport.centerX += realOffset - newRealOffset;
         this.viewport.centerY += imagOffset - newImagOffset;
-        
+
+        this.surfaceDirty = true;
         this.render();
     }
 
+    /** Restores the cached 2D fractal image without recomputing it. */
+    private redraw2DBase(): boolean {
+        if (this.cached2DImage) {
+            this.ctx.putImageData(this.cached2DImage, 0, 0);
+            return true;
+        }
+        return false;
+    }
+
     private drawSelectionBox(): void {
-        this.render();
+        // Blit the cached fractal instead of recomputing it on every mousemove
+        if (!this.redraw2DBase()) return;
 
         if (this.dragStart && this.dragEnd) {
             // Different colors for different modes
@@ -442,7 +524,7 @@ class MandelbrotExplorer {
     }
 
     private drawRectangleSelection(): void {
-        this.render();
+        if (!this.redraw2DBase()) return;
 
         if (this.selectedRectangle) {
             this.ctx.strokeStyle = 'lime';
@@ -467,23 +549,41 @@ class MandelbrotExplorer {
 
         setTimeout(() => {
             if (this.is3DMode) {
-                this.calculateIterationData();
-                this.renderer3D.render(
-                    this.iterationData,
-                    parseInt((document.getElementById('iterations') as HTMLInputElement).value),
-                    this.colorScheme,
-                    this.rotationX,
-                    this.rotationY,
-                    this.rotationZ,
-                    this.heightScale
-                );
+                if (this.surfaceDirty || this.surfaceMode !== 'viewport' || !this.renderer3D.hasSurface()) {
+                    this.rebuildViewportSurface();
+                }
+                this.renderer3D.draw(this.rotationX, this.rotationY, this.rotationZ);
             } else {
                 const imageData = this.calculateWithColorScheme();
                 const img = new ImageData(imageData, this.canvas.width, this.canvas.height);
+                this.cached2DImage = img;
                 this.ctx.putImageData(img, 0, 0);
             }
             loading.style.display = 'none';
         }, 0);
+    }
+
+    /**
+     * Samples the fractal for the current viewport directly at the
+     * renderer's grid resolution and caches the resulting surface.
+     */
+    private rebuildViewportSurface(): void {
+        const width = this.canvas.width;
+        const height = this.canvas.height;
+        const scale = 4 / (this.viewport.zoom * Math.min(width, height));
+        const centerX = this.viewport.centerX;
+        const centerY = this.viewport.centerY;
+        const maxIterations = parseInt((document.getElementById('iterations') as HTMLInputElement).value);
+
+        const sampler = (px: number, py: number): number => {
+            const real = centerX + (px - width / 2) * scale;
+            const imag = centerY + (py - height / 2) * scale;
+            return this.mandelbrotIteration({ real, imag }, maxIterations);
+        };
+
+        this.renderer3D.buildSurfaceFromIterations(sampler, maxIterations, this.colorScheme, this.heightScale);
+        this.surfaceMode = 'viewport';
+        this.surfaceDirty = false;
     }
 
     private calculateWithColorScheme(): Uint8ClampedArray {
@@ -497,10 +597,10 @@ class MandelbrotExplorer {
             for (let x = 0; x < width; x++) {
                 const real = this.viewport.centerX + (x - width / 2) * scale;
                 const imag = this.viewport.centerY + (y - height / 2) * scale;
-                
+
                 const iterations = this.mandelbrotIteration({ real, imag }, maxIterations);
                 const pixel = (y * width + x) * 4;
-                
+
                 const color = ColorSchemes.getColor(iterations, maxIterations, this.colorScheme);
                 imageData[pixel] = color.r;
                 imageData[pixel + 1] = color.g;
@@ -510,25 +610,6 @@ class MandelbrotExplorer {
         }
 
         return imageData;
-    }
-
-    private calculateIterationData(): void {
-        const width = this.canvas.width;
-        const height = this.canvas.height;
-        const scale = 4 / (this.viewport.zoom * Math.min(width, height));
-        const maxIterations = parseInt((document.getElementById('iterations') as HTMLInputElement).value);
-
-        this.iterationData = [];
-        
-        for (let y = 0; y < height; y++) {
-            this.iterationData[y] = [];
-            for (let x = 0; x < width; x++) {
-                const real = this.viewport.centerX + (x - width / 2) * scale;
-                const imag = this.viewport.centerY + (y - height / 2) * scale;
-                
-                this.iterationData[y][x] = this.mandelbrotIteration({ real, imag }, maxIterations);
-            }
-        }
     }
 
     private mandelbrotIteration(c: { real: number, imag: number }, maxIterations: number): number {
@@ -563,26 +644,27 @@ class MandelbrotExplorer {
         setTimeout(() => {
             // Calculate the heightmap from the selected rectangle
             const heightMap = this.createHeightMapFromRectangle();
+            if (heightMap.length < 2 || (heightMap[0]?.length || 0) < 2) {
+                loading.style.display = 'none';
+                return;
+            }
 
             // Switch to 3D mode
             this.is3DMode = true;
             (document.getElementById('render3D') as HTMLInputElement).checked = true;
             (document.getElementById('3dControls') as HTMLDivElement).style.display = 'block';
+            this.canvas.style.cursor = 'grab';
 
             // Disable rectangle selection mode
             this.isRectangleSelectionMode = false;
             (document.getElementById('rectangleSelection') as HTMLInputElement).checked = false;
             (document.getElementById('render3DFromRectangle') as HTMLButtonElement).disabled = true;
 
-            // Render the 3D heightmap
-            this.renderer3D.renderFromHeightMap(
-                heightMap,
-                this.colorScheme,
-                this.rotationX,
-                this.rotationY,
-                this.rotationZ,
-                this.heightScale
-            );
+            // Build and draw the cached heightmap surface (rotations and
+            // height/color changes now reuse it instead of rebuilding)
+            this.renderer3D.buildSurfaceFromHeightMap(heightMap, this.colorScheme, this.heightScale);
+            this.surfaceMode = 'heightmap';
+            this.renderer3D.draw(this.rotationX, this.rotationY, this.rotationZ);
 
             loading.style.display = 'none';
         }, 0);
@@ -592,19 +674,37 @@ class MandelbrotExplorer {
         if (!this.selectedRectangle) return [];
 
         const rect = this.selectedRectangle;
-        const width = rect.endX - rect.startX;
-        const height = rect.endY - rect.startY;
+        const startX = Math.max(0, Math.floor(rect.startX));
+        const startY = Math.max(0, Math.floor(rect.startY));
+        const width = Math.min(this.canvas.width - startX, Math.floor(rect.endX - rect.startX));
+        const height = Math.min(this.canvas.height - startY, Math.floor(rect.endY - rect.startY));
+        if (width < 2 || height < 2) return [];
 
-        // Get the image data from the selected rectangle
-        const imageData = this.ctx.getImageData(rect.startX, rect.startY, width, height);
-        const data = imageData.data;
+        // Read from the cached fractal image so selection overlay strokes
+        // (the lime rectangle) do not leak into the heightmap
+        let data: Uint8ClampedArray;
+        let rowStride: number;
+        let offsetX: number;
+        let offsetY: number;
+        if (this.cached2DImage) {
+            data = this.cached2DImage.data;
+            rowStride = this.cached2DImage.width;
+            offsetX = startX;
+            offsetY = startY;
+        } else {
+            const imageData = this.ctx.getImageData(startX, startY, width, height);
+            data = imageData.data;
+            rowStride = width;
+            offsetX = 0;
+            offsetY = 0;
+        }
 
         const heightMap: number[][] = [];
 
         for (let y = 0; y < height; y++) {
             heightMap[y] = [];
             for (let x = 0; x < width; x++) {
-                const pixelIndex = (y * width + x) * 4;
+                const pixelIndex = ((y + offsetY) * rowStride + (x + offsetX)) * 4;
                 const r = data[pixelIndex];
                 const g = data[pixelIndex + 1];
                 const b = data[pixelIndex + 2];

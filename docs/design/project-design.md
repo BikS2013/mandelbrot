@@ -1,12 +1,57 @@
 # Project Design: Smooth 3D Rendering Engine for Mandelbrot Explorer
 
 **Date:** 2026-03-14
-**Status:** Ready for Implementation
+**Status:** Implemented — 3D pipeline superseded by Revision 2 (2026-07-02)
 **Based On:**
 - `docs/design/plan-001-smooth-3d-rendering.md`
 - `docs/reference/refined-request-smooth-3d-rendering.md`
 - `docs/reference/investigation-smooth-3d-rendering.md`
 - `docs/reference/codebase-scan-smooth-3d-rendering.md`
+
+---
+
+## REVISION 2 (2026-07-02): Cached-Scene 3D Renderer
+
+**Plan:** `docs/design/plan-002-3d-representation-improvements.md` (authoritative
+description of the current 3D architecture)
+
+`src/renderer3d.ts` was rewritten around a cached-scene architecture. The sections
+below this revision block describe the Plan-001 design and remain as historical
+reference; where they conflict, **Revision 2 wins**. Key differences:
+
+1. **Scene building is decoupled from drawing.** `buildSurfaceFromIterations()` /
+   `buildSurfaceFromHeightMap()` sample and smooth the surface once;
+   `draw(rotX, rotY, rotZ, quality)` only rotates, projects, depth-sorts and
+   paints the cached grid. Rotation, height-scale, color-scheme and 3D-zoom
+   changes no longer resample the fractal.
+2. **Direct grid-resolution sampling.** The fractal is sampled straight at grid
+   resolution (1 vertex / ~4 px, max 300 per axis) with 2x2 supersampling —
+   replacing the full-canvas `calculateIterationData()` + area-average
+   downsampling of Plan 001 (superseded: B.5, B.6, E.1).
+3. **Height mapping inverted to the classic mesa.** Interior plateau at
+   normalized 1.0, exterior falls off as `(iter/max)^2.2`
+   (supersedes B.2 / FR-3D-005, which mapped the interior to 0).
+4. **Terrain-space lighting.** Smooth per-vertex normals via central differences
+   of the smoothed height field; three normalized hillshade lights fixed in
+   terrain space; ambient+diffuse baked per vertex in linear color space;
+   per-triangle Phong specular using the inverse-rotated view direction; single
+   gamma encode at the end (supersedes B.7).
+5. **Orbit-correct rotation order** — yaw around the terrain up-axis first, then
+   roll, then pitch — so heights always rise toward screen-top and yaw never
+   flips the terrain upside-down.
+6. **Colors follow the terrain.** Vertex colors derive from the smoothed height
+   field (inverse of the height curve) so bands hug contours instead of
+   reproducing per-sample iteration noise.
+7. **Rectangle-selection path** now runs the same smoothing pipeline, reads
+   pixels from the cached 2D `ImageData` (no overlay leakage), and its surface
+   survives rotation/recolor/height changes (`surfaceMode` tracking).
+8. **Interaction:** mouse drag-to-orbit and scroll-zoom in 3D mode with
+   rAF-coalesced redraws (`fast` decimated quality while dragging, `high` on
+   release); 2D selection overlays blit a cached `ImageData`.
+
+Measured on a 1920x1080 canvas: surface build ~10x fewer fractal samples;
+rotation redraw ~90 ms (high) / ~25 ms (fast) versus a full multi-second pipeline
+re-run before.
 
 ---
 
