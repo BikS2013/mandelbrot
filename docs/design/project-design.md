@@ -1285,3 +1285,18 @@ The `render3DFromSelectedRectangle()` method (index.ts, lines 551-583) uses `ren
 |---|---|---|---|
 | `gridResolution` | 1 | 3 | Reduce vertex count 9x, natural noise suppression |
 | `smoothingRadius` | 2 | 4 | Wider kernel for more effective smoothing |
+
+## Deployment: GitHub Pages (added 2026-07-05)
+
+The explorer is published as a static site on GitHub Pages at
+https://biks2013.github.io/mandelbrot/.
+
+- **Why it works**: the app is fully client-side (`index.html` + ES modules
+  compiled to `dist/`); `serve.js` is only a local static file server and is
+  not needed in production.
+- **Mechanism**: `.github/workflows/deploy-pages.yml` runs on every push to
+  `main` — it runs `npm ci` and `npm run build` (tsc), stages `index.html`
+  and `dist/*.js` into `_site/`, and deploys via `actions/deploy-pages`.
+  `dist/` therefore stays gitignored; the build output is never committed.
+- **Pages configuration**: `build_type: workflow` (GitHub Actions source),
+  HTTPS enforced. Local development via `npm start` is unchanged.
