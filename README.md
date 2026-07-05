@@ -8,6 +8,12 @@
 
 A TypeScript-based interactive explorer for the Mandelbrot set with real-time rendering and multiple color schemes.
 
+## Live Demo
+
+🌐 **Try it online: [https://biks2013.github.io/mandelbrot/](https://biks2013.github.io/mandelbrot/)**
+
+The explorer is published as a GitHub Pages site and redeploys automatically on every push to `main` via `.github/workflows/deploy-pages.yml` — no manual steps needed.
+
 ## Installation
 
 ```bash
